@@ -29,7 +29,6 @@ def cycle_waveforms():
         print(f"Playing {wave_type} wave...")
         wave_gen.set_wave_type(wave_type)
         time.sleep(3)
-
     # Silence
     wave_gen.set_amplitude(0.0)
     time.sleep(2)

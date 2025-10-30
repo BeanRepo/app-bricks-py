@@ -38,7 +38,6 @@ def frequency_sweep():
     for freq in range(880, 219, -20):
         wave_gen.set_frequency(float(freq))
         time.sleep(0.1)
-
     # Fade out
     print("Fading out...")
     wave_gen.set_amplitude(0.0)
