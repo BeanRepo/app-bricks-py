@@ -24,8 +24,8 @@ App.start_brick(wave_gen)
 
 # Set initial frequency and amplitude
 wave_gen.set_frequency(440.0)  # A4 note (440 Hz)
-wave_gen.set_amplitude(0.7)    # 70% amplitude
-wave_gen.set_volume(0.8)       # 80% master volume
+wave_gen.set_amplitude(0.7)  # 70% amplitude
+wave_gen.set_volume(0.8)  # 80% master volume
 
 print("Playing 440Hz sine wave (A4 note)")
 print("Press Ctrl+C to stop")

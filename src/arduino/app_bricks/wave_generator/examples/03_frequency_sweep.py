@@ -21,27 +21,29 @@ wave_gen = WaveGenerator(
 App.start_brick(wave_gen)
 wave_gen.set_amplitude(0.7)
 
+
 def frequency_sweep():
     """Sweep through frequency ranges."""
-    
+
     # Low to high sweep
     print("Sweeping low to high (220Hz → 880Hz)...")
     for freq in range(220, 881, 20):
         wave_gen.set_frequency(float(freq))
         time.sleep(0.1)
-    
+
     time.sleep(0.5)
-    
+
     # High to low sweep
     print("Sweeping high to low (880Hz → 220Hz)...")
     for freq in range(880, 219, -20):
         wave_gen.set_frequency(float(freq))
         time.sleep(0.1)
-    
+
     # Fade out
     print("Fading out...")
     wave_gen.set_amplitude(0.0)
     time.sleep(2)
+
 
 print("Frequency sweep demonstration")
 print("Listen for smooth glide between frequencies")

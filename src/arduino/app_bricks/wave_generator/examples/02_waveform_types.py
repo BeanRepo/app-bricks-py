@@ -22,16 +22,18 @@ wave_gen.set_amplitude(0.6)
 
 waveforms = ["sine", "square", "sawtooth", "triangle"]
 
+
 def cycle_waveforms():
     """Cycle through different waveform types."""
     for wave_type in waveforms:
         print(f"Playing {wave_type} wave...")
         wave_gen.set_wave_type(wave_type)
         time.sleep(3)
-    
+
     # Silence
     wave_gen.set_amplitude(0.0)
     time.sleep(2)
+
 
 print("Cycling through waveforms:")
 print("sine → square → sawtooth → triangle")
