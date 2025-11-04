@@ -27,7 +27,7 @@ NOTES = {
 
 wave_gen = WaveGenerator(
     wave_type="triangle",  # Soft triangle wave
-    glide=0.03,            # 30ms glide between notes
+    glide=0.03,  # 30ms glide between notes
     attack=0.01,
     release=0.05,
 )
@@ -35,10 +35,11 @@ wave_gen = WaveGenerator(
 App.start_brick(wave_gen)
 wave_gen.set_volume(0.7)
 
+
 def play_scale():
     """Play C major scale up and down."""
     scale = ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"]
-    
+
     # Ascending
     print("Playing ascending scale...")
     for note in scale:
@@ -46,9 +47,9 @@ def play_scale():
         wave_gen.set_frequency(NOTES[note])
         wave_gen.set_amplitude(0.7)
         time.sleep(0.5)
-    
+
     time.sleep(0.3)
-    
+
     # Descending
     print("Playing descending scale...")
     for note in reversed(scale):
@@ -56,10 +57,11 @@ def play_scale():
         wave_gen.set_frequency(NOTES[note])
         wave_gen.set_amplitude(0.7)
         time.sleep(0.5)
-    
+
     # Fade out
     wave_gen.set_amplitude(0.0)
     time.sleep(2)
+
 
 print("Musical Scale Demo - C Major")
 print("Press Ctrl+C to stop")
