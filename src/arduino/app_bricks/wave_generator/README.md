@@ -63,6 +63,40 @@ wave_gen.set_envelope_params(attack=0.05, release=0.1, glide=0.05)
 App.run()
 ```
 
+### Using Custom Speaker Configuration
+
+If you need specific device selection or audio format, create a Speaker externally:
+
+```python
+from arduino.app_bricks.wave_generator import WaveGenerator
+from arduino.app_peripherals.speaker import Speaker
+from arduino.app_utils import App
+
+# Create Speaker with specific configuration
+speaker = Speaker(
+    device=Speaker.USB_SPEAKER_2,  # Select specific USB speaker
+    sample_rate=16000,
+    channels=1,
+    format="S16_LE"  # Different audio format
+)
+
+# Pass the speaker to WaveGenerator
+wave_gen = WaveGenerator(
+    sample_rate=16000,
+    speaker=speaker,  # Use custom-configured speaker
+    wave_type="sine"
+)
+
+App.start_brick(wave_gen)
+
+# Control the generator
+wave_gen.set_frequency(440.0)
+wave_gen.set_amplitude(0.7)
+
+App.run()
+# WaveGenerator automatically manages the speaker's lifecycle (start/stop)
+```
+
 ### Theremin-Style Controller
 
 ```python
@@ -128,8 +162,7 @@ WaveGenerator(
     attack: float = 0.01,
     release: float = 0.03,
     glide: float = 0.02,
-    speaker_device: str = Speaker.USB_SPEAKER_1,
-    speaker_format: str = "FLOAT_LE",
+    speaker: Speaker = None,
 )
 ```
 
@@ -140,8 +173,7 @@ WaveGenerator(
 - `attack`: Amplitude attack time in seconds (default: 0.01)
 - `release`: Amplitude release time in seconds (default: 0.03)
 - `glide`: Frequency glide time (portamento) in seconds (default: 0.02)
-- `speaker_device`: Speaker device identifier (default: USB_SPEAKER_1)
-- `speaker_format`: Audio format (default: "FLOAT_LE")
+- `speaker`: Pre-configured Speaker instance (optional). If None, a new Speaker will be created with default settings (auto-detect device, FLOAT_LE format, 1 channel, specified sample_rate). WaveGenerator always manages the speaker's lifecycle (calling start/stop)
 
 ### Methods
 

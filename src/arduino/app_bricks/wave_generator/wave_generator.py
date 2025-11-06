@@ -43,8 +43,7 @@ class WaveGenerator:
         attack: float = 0.01,
         release: float = 0.03,
         glide: float = 0.02,
-        speaker_device: str = Speaker.USB_SPEAKER_1,
-        speaker_format: str = "FLOAT_LE",
+        speaker: Speaker = None,
     ):
         """Initialize the WaveGenerator brick.
 
@@ -55,8 +54,9 @@ class WaveGenerator:
             attack (float): Attack time for amplitude envelope in seconds (default: 0.01).
             release (float): Release time for amplitude envelope in seconds (default: 0.03).
             glide (float): Frequency glide time (portamento) in seconds (default: 0.02).
-            speaker_device (str): Speaker device identifier (default: USB_SPEAKER_1).
-            speaker_format (str): Audio format (default: "FLOAT_LE").
+            speaker (Speaker, optional): Pre-configured Speaker instance. If None, a new Speaker
+                will be created with default settings (auto-detect device, FLOAT_LE format).
+                WaveGenerator will manage the speaker's lifecycle (calling start/stop).
 
         Raises:
             SpeakerException: If no USB speaker is found or device is busy.
@@ -88,7 +88,22 @@ class WaveGenerator:
         self._buf_samples = None
 
         # Speaker setup
-        self._speaker = Speaker(sample_rate=sample_rate, format=speaker_format, device=speaker_device)
+        if speaker is not None:
+            # Use externally provided Speaker instance
+            self._speaker = speaker
+            logger.debug("Using externally provided Speaker instance")
+        else:
+            # Create internal Speaker instance with default settings
+            self._speaker = Speaker(
+                device=None,  # Auto-detect first available USB speaker
+                sample_rate=sample_rate,
+                channels=1,
+                format="FLOAT_LE",
+            )
+            logger.debug(
+                "Created internal Speaker: device=auto-detect, sample_rate=%d, format=FLOAT_LE",
+                sample_rate,
+            )
 
         # Producer thread control
         self._running = threading.Event()
