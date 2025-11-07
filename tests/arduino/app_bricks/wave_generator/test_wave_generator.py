@@ -31,6 +31,7 @@ def mock_speaker(monkeypatch):
             self.format = format
             self._is_started = False
             self._played_data = []
+            self._mixer = FakeMixer()
 
         def start(self):
             self._is_started = True
@@ -42,6 +43,9 @@ def mock_speaker(monkeypatch):
             if self._is_started:
                 self._played_data.append(data)
 
+        def set_volume(self, volume: int):
+            self._mixer.setvolume(volume)
+
         def is_started(self):
             return self._is_started
 
@@ -51,6 +55,16 @@ def mock_speaker(monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             self.stop()
             return False
+
+    class FakeMixer:
+        def __init__(self):
+            self._volume = 100
+
+        def setvolume(self, volume: int):
+            self._volume = max(0, min(100, volume))
+
+        def getvolume(self):
+            return [self._volume]
 
     # Patch Speaker in the wave_generator module
     monkeypatch.setattr("arduino.app_bricks.wave_generator.wave_generator.Speaker", FakeSpeaker)
@@ -67,7 +81,6 @@ def test_wave_generator_initialization_default(mock_speaker):
     assert wave_gen.attack == 0.01
     assert wave_gen.release == 0.03
     assert wave_gen.glide == 0.02
-    assert wave_gen.master_volume == 0.8
     assert wave_gen._speaker is not None
     assert wave_gen._speaker.sample_rate == 16000
 
@@ -181,21 +194,20 @@ def test_set_wave_type(mock_speaker):
 
 
 def test_set_volume(mock_speaker):
-    """Test setting master volume."""
+    """Test setting hardware volume."""
     wave_gen = WaveGenerator()
 
-    wave_gen.set_volume(0.7)
-    assert wave_gen.master_volume == 0.7
+    wave_gen.set_volume(70)
+    assert wave_gen._speaker._mixer._volume == 70
 
-    wave_gen.set_volume(1.0)
-    assert wave_gen.master_volume == 1.0
+    wave_gen.set_volume(100)
+    assert wave_gen._speaker._mixer._volume == 100
 
-    # Test out of range (should be clamped)
-    wave_gen.set_volume(1.5)
-    assert wave_gen.master_volume == 1.0
+    # Test get_volume
+    assert wave_gen.get_volume() == 100
 
-    wave_gen.set_volume(-0.2)
-    assert wave_gen.master_volume == 0.0
+    wave_gen.set_volume(50)
+    assert wave_gen.get_volume() == 50
 
 
 def test_set_envelope_params(mock_speaker):
@@ -229,7 +241,7 @@ def test_get_state(mock_speaker):
     wave_gen.set_frequency(440.0)
     wave_gen.set_amplitude(0.8)
     wave_gen.set_wave_type("square")
-    wave_gen.set_volume(0.9)
+    wave_gen.set_volume(90)
 
     state = wave_gen.get_state()
 
@@ -237,8 +249,8 @@ def test_get_state(mock_speaker):
     assert "amplitude" in state
     assert "wave_type" in state
     assert state["wave_type"] == "square"
-    assert "master_volume" in state
-    assert state["master_volume"] == 0.9
+    assert "volume" in state
+    assert state["volume"] == 90
     assert "phase" in state
 
 
@@ -247,7 +259,7 @@ def test_generate_block_sine(mock_speaker):
     wave_gen = WaveGenerator(sample_rate=16000)
 
     # Generate a block
-    block = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine", master_volume=1.0)
+    block = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine")
 
     # Check block properties
     assert isinstance(block, np.ndarray)
@@ -262,7 +274,7 @@ def test_generate_block_square(mock_speaker):
     """Test generating a square wave block."""
     wave_gen = WaveGenerator(sample_rate=16000)
 
-    block = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="square", master_volume=1.0)
+    block = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="square")
 
     assert isinstance(block, np.ndarray)
     # Square wave has envelope applied, so check amplitude range
@@ -273,7 +285,7 @@ def test_generate_block_sawtooth(mock_speaker):
     """Test generating a sawtooth wave block."""
     wave_gen = WaveGenerator(sample_rate=16000)
 
-    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sawtooth", master_volume=1.0)
+    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sawtooth")
 
     # Verify internal state updated correctly
     assert wave_gen._buf_samples is not None
@@ -283,7 +295,7 @@ def test_generate_block_triangle(mock_speaker):
     """Test generating a triangle wave block."""
     wave_gen = WaveGenerator(sample_rate=16000)
 
-    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="triangle", master_volume=1.0)
+    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="triangle")
 
     # Verify internal state updated correctly
     assert wave_gen._buf_samples is not None
@@ -297,7 +309,7 @@ def test_frequency_glide(mock_speaker):
     wave_gen._current_freq = 220.0
 
     # Generate block with new target frequency
-    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine", master_volume=1.0)
+    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine")
 
     # Current frequency should have moved towards target but not reached it
     # (because glide time is longer than block duration)
@@ -313,33 +325,11 @@ def test_amplitude_envelope(mock_speaker):
     wave_gen._current_amp = 0.0
 
     # Generate block with new target amplitude
-    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.8, wave_type="sine", master_volume=1.0)
+    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.8, wave_type="sine")
 
     # Current amplitude should have moved towards target but not reached it
     assert wave_gen._current_amp > 0.0
     assert wave_gen._current_amp < 0.8
-
-
-def test_master_volume_scaling(mock_speaker):
-    """Test master volume affects output amplitude."""
-    # Create two separate generators to avoid state interference
-    wave_gen_full = WaveGenerator(sample_rate=16000)
-    wave_gen_full._current_amp = 1.0
-    wave_gen_full._current_freq = 440.0
-
-    block_full = wave_gen_full._generate_block(freq_target=440.0, amp_target=1.0, wave_type="sine", master_volume=1.0)
-
-    wave_gen_half = WaveGenerator(sample_rate=16000)
-    wave_gen_half._current_amp = 1.0
-    wave_gen_half._current_freq = 440.0
-
-    block_half = wave_gen_half._generate_block(freq_target=440.0, amp_target=1.0, wave_type="sine", master_volume=0.5)
-
-    # Half volume block should have approximately half the amplitude
-    max_full = np.max(np.abs(block_full))
-    max_half = np.max(np.abs(block_half))
-    assert max_half < max_full
-    assert 0.4 < (max_half / max_full) < 0.6  # Should be roughly 0.5
 
 
 def test_producer_loop_generates_audio(app_instance, mock_speaker):
@@ -397,7 +387,7 @@ def test_buffer_preallocation(mock_speaker):
     wave_gen = WaveGenerator(sample_rate=16000)
 
     # Generate first block
-    block1 = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine", master_volume=1.0)
+    block1 = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine")
 
     # Check buffers are allocated
     assert wave_gen._buf_N > 0
@@ -407,7 +397,7 @@ def test_buffer_preallocation(mock_speaker):
     assert wave_gen._buf_samples is not None
 
     # Generate second block
-    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine", master_volume=1.0)
+    _ = wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine")
 
     # Buffers should still be the same size (reused)
     assert wave_gen._buf_N == len(block1)
@@ -421,7 +411,7 @@ def test_phase_continuity(mock_speaker):
 
     # Generate multiple blocks
     for _ in range(10):
-        wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine", master_volume=1.0)
+        wave_gen._generate_block(freq_target=440.0, amp_target=0.5, wave_type="sine")
 
     # Phase should have advanced
     assert wave_gen._phase != initial_phase
@@ -433,7 +423,7 @@ def test_zero_amplitude_produces_silence(mock_speaker):
     """Test that zero amplitude produces silent output."""
     wave_gen = WaveGenerator(sample_rate=16000)
 
-    block = wave_gen._generate_block(freq_target=440.0, amp_target=0.0, wave_type="sine", master_volume=1.0)
+    block = wave_gen._generate_block(freq_target=440.0, amp_target=0.0, wave_type="sine")
 
     # All samples should be zero or very close to zero
     assert np.allclose(block, 0.0, atol=1e-6)
