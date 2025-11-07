@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import logging
 import math
 import threading
 import time
@@ -10,7 +11,7 @@ from typing import Literal
 from arduino.app_utils import Logger, brick
 from arduino.app_peripherals.speaker import Speaker
 
-logger = Logger("WaveGenerator")
+logger = Logger("WaveGenerator", logging.INFO)
 
 
 WaveType = Literal["sine", "square", "sawtooth", "triangle"]
@@ -32,7 +33,6 @@ class WaveGenerator:
         wave_type (WaveType): Type of waveform to generate.
         frequency (float): Current output frequency in Hz.
         amplitude (float): Current output amplitude (0.0-1.0).
-        master_volume (float): Global volume multiplier (0.0-1.0).
     """
 
     def __init__(
@@ -73,7 +73,6 @@ class WaveGenerator:
         # Target state (updated by user)
         self._target_freq = 440.0
         self._target_amp = 0.0
-        self.master_volume = 0.8
 
         # Current state (internal, smoothed)
         self._current_freq = 440.0
@@ -91,7 +90,7 @@ class WaveGenerator:
         if speaker is not None:
             # Use externally provided Speaker instance
             self._speaker = speaker
-            logger.debug("Using externally provided Speaker instance")
+            logger.info("Using externally provided Speaker instance")
         else:
             # Create internal Speaker instance with default settings
             self._speaker = Speaker(
@@ -100,7 +99,7 @@ class WaveGenerator:
                 channels=1,
                 format="FLOAT_LE",
             )
-            logger.debug(
+            logger.info(
                 "Created internal Speaker: device=auto-detect, sample_rate=%d, format=FLOAT_LE",
                 sample_rate,
             )
@@ -127,8 +126,16 @@ class WaveGenerator:
             logger.warning("WaveGenerator is already running")
             return
 
-        logger.debug("Starting WaveGenerator...")
+        logger.info("Starting WaveGenerator...")
         self._speaker.start()
+
+        # Set hardware speaker volume to maximum (100%)
+        try:
+            self._speaker.set_volume(100)
+            logger.info("Speaker hardware volume set to 100%")
+        except Exception as e:
+            logger.warning(f"Could not set speaker volume: {e}")
+
         self._running.set()
 
         self._producer_thread = threading.Thread(target=self._producer_loop, daemon=True, name="WaveGenerator-Producer")
@@ -145,7 +152,7 @@ class WaveGenerator:
             logger.warning("WaveGenerator is not running")
             return
 
-        logger.debug("Stopping WaveGenerator...")
+        logger.info("Stopping WaveGenerator...")
         self._running.clear()
 
         if self._producer_thread:
@@ -196,16 +203,32 @@ class WaveGenerator:
 
         with self._state_lock:
             self.wave_type = wave_type
-        logger.debug(f"Wave type changed to: {wave_type}")
+        logger.info(f"Wave type changed to: {wave_type}")
 
-    def set_volume(self, volume: float):
-        """Set the master volume level.
+    def set_volume(self, volume: int):
+        """Set the speaker volume level.
+
+        This is a wrapper that controls the hardware volume of the USB speaker device.
 
         Args:
-            volume (float): Master volume in range [0.0, 1.0].
+            volume (int): Hardware volume level (0-100).
+
+        Raises:
+            SpeakerException: If the mixer is not available or if volume cannot be set.
         """
-        with self._state_lock:
-            self.master_volume = float(max(0.0, min(1.0, volume)))
+        self._speaker.set_volume(volume)
+        logger.info(f"Speaker volume set to {volume}%")
+
+    def get_volume(self) -> int:
+        """Get the current speaker volume level.
+
+        Returns:
+            int: Current hardware volume level (0-100).
+        """
+        try:
+            return self._speaker._mixer.getvolume()[0] if self._speaker._mixer else 100
+        except Exception:
+            return 100
 
     def set_envelope_params(self, attack: float = None, release: float = None, glide: float = None):
         """Update envelope parameters.
@@ -234,7 +257,7 @@ class WaveGenerator:
                 "frequency": self._current_freq,
                 "amplitude": self._current_amp,
                 "wave_type": self.wave_type,
-                "master_volume": self.master_volume,
+                "volume": self.get_volume(),
                 "phase": self._phase,
             }
 
@@ -244,7 +267,9 @@ class WaveGenerator:
         Continuously generates audio blocks at a steady cadence and streams
         them to the speaker device.
         """
+        logger.debug("Producer loop started")
         next_time = time.perf_counter()
+        block_count = 0
 
         while self._running.is_set():
             next_time += self.block_duration
@@ -254,11 +279,15 @@ class WaveGenerator:
                 target_freq = self._target_freq
                 target_amp = self._target_amp
                 wave_type = self.wave_type
-                master_volume = self.master_volume
+
+            # Log every 100 blocks or when amplitude changes
+            block_count += 1
+            if block_count % 100 == 0 or (block_count < 5):
+                logger.debug(f"Producer: block={block_count}, freq={target_freq:.1f}Hz, amp={target_amp:.3f}")
 
             # Generate audio block
             try:
-                audio_block = self._generate_block(target_freq, target_amp, wave_type, master_volume)
+                audio_block = self._generate_block(target_freq, target_amp, wave_type)
                 self._speaker.play(audio_block, block_on_queue=False)
             except Exception as e:
                 logger.error(f"Error generating audio block: {e}")
@@ -274,14 +303,13 @@ class WaveGenerator:
 
         logger.debug("Producer loop terminated")
 
-    def _generate_block(self, freq_target: float, amp_target: float, wave_type: str, master_volume: float) -> np.ndarray:
+    def _generate_block(self, freq_target: float, amp_target: float, wave_type: str) -> np.ndarray:
         """Generate a single audio block.
 
         Args:
             freq_target (float): Target frequency in Hz.
             amp_target (float): Target amplitude (0.0-1.0).
             wave_type (str): Waveform type.
-            master_volume (float): Master volume multiplier.
 
         Returns:
             np.ndarray: Audio samples as float32 array.
@@ -354,8 +382,6 @@ class WaveGenerator:
 
         # === APPLY ENVELOPE AND GAIN ===
         np.multiply(samples, envelope, out=samples)
-        if master_volume != 1.0:
-            np.multiply(samples, master_volume, out=samples)
 
         # Update internal state
         self._current_amp = amp_current
