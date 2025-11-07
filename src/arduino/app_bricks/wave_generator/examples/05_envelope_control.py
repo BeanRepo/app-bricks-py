@@ -17,7 +17,7 @@ wave_gen = WaveGenerator(wave_type="sine")
 App.start_brick(wave_gen)
 
 wave_gen.set_frequency(440.0)
-wave_gen.set_volume(0.8)
+wave_gen.set_volume(80)
 
 
 def envelope_demo():

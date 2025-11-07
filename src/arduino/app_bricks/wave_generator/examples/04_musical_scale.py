@@ -33,7 +33,7 @@ wave_gen = WaveGenerator(
 )
 
 App.start_brick(wave_gen)
-wave_gen.set_volume(0.7)
+wave_gen.set_volume(70)
 
 
 def play_scale():
