@@ -227,27 +227,24 @@ class Speaker:
             raise SpeakerException(f"Unexpected error opening spaker: {e}")
 
     def _load_mixer(self) -> alsaaudio.Mixer:
+        """Load the Headset mixer for volume control."""
         try:
             cards = alsaaudio.cards()
             card_indexes = alsaaudio.card_indexes()
             for card_name, card_index in zip(cards, card_indexes):
-                logger.debug(f"Checking Card {card_name} (index {card_index}, device {self.device})")
                 if f"CARD={card_name}," in self.device:
                     try:
-                        mixer = alsaaudio.mixers(cardindex=card_index)
-                        if len(mixer) == 0:
-                            logger.warning(f"No mixers found for card {card_name}.")
-                            continue
-                        mx = alsaaudio.Mixer(mixer[0])
-                        logger.debug(f"Loaded mixer: {mixer[0]} for card {card_name}")
-                        return mx
+                        mx = alsaaudio.Mixer("Headset", cardindex=card_index)
+                        if mx.volumecap():
+                            logger.info(f"Loaded Headset mixer for card {card_name}")
+                            return mx
                     except alsaaudio.ALSAAudioError as e:
-                        logger.debug(f"Failed to load mixer for card {card_name}: {e}")
+                        logger.debug(f"Failed to load Headset mixer for card {card_name}: {e}")
+                        return None
 
-            # No suitable mixer found, return None
             return None
         except alsaaudio.ALSAAudioError as e:
-            logger.warning(f"Error loading mixer {self.device}: {e}")
+            logger.warning(f"Error loading mixer for {self.device}: {e}")
             return None
 
     def get_volume(self) -> int:
