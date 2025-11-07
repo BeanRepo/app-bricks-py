@@ -195,11 +195,17 @@ Change the waveform type.
 **Parameters:**
 - `wave_type`: One of "sine", "square", "sawtooth", "triangle"
 
-#### `set_volume(volume: float)`
-Set master volume level.
+#### `set_volume(volume: int)`
+Set hardware speaker volume level.
 
 **Parameters:**
-- `volume`: Master volume in range [0.0, 1.0]
+- `volume`: Hardware volume level (0-100)
+
+#### `get_volume() -> int`
+Get current hardware speaker volume level.
+
+**Returns:**
+- Current hardware volume level (0-100)
 
 #### `set_envelope_params(attack=None, release=None, glide=None)`
 Update envelope parameters.
@@ -213,7 +219,7 @@ Update envelope parameters.
 Get current generator state.
 
 **Returns:**
-- Dictionary with keys: `frequency`, `amplitude`, `wave_type`, `master_volume`, `phase`
+- Dictionary with keys: `frequency`, `amplitude`, `wave_type`, `volume`, `phase`
 
 ## Waveform Types
 
@@ -287,7 +293,7 @@ Time to smoothly transition from current frequency to target frequency.
 ### No Sound Output
 - Check USB speaker is connected and powered
 - Verify amplitude is > 0: `wave_gen.set_amplitude(0.5)`
-- Check master volume: `wave_gen.set_volume(0.8)`
+- Check hardware volume: `wave_gen.set_volume(80)`
 
 ### Choppy or Clicking Audio
 - Increase glide time: `wave_gen.set_envelope_params(glide=0.05)`
