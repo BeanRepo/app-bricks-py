@@ -45,10 +45,9 @@ App.start_brick(wave_gen)
 def play_sequence():
     """Play a simple frequency sequence."""
     frequencies = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25]  # C4 to C5
-    note_names = ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"]
 
-    for freq, name in zip(frequencies, note_names):
-        print(f"Playing {name} ({freq:.2f} Hz)")
+    for freq in frequencies:
+        print(f"Playing {freq:.2f} Hz")
         wave_gen.set_frequency(freq)
         wave_gen.set_amplitude(0.7)
         time.sleep(0.5)
