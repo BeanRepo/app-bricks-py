@@ -309,4 +309,4 @@ Time to smoothly transition from current frequency to target frequency.
 
 This brick is licensed under the Mozilla Public License 2.0 (MPL-2.0).
 
-Copyright (C) 2025 ARDUINO SA <http://www.arduino.cc>
+Copyright (C) ARDUINO SRL <http://www.arduino.cc>
