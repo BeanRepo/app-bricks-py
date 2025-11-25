@@ -52,6 +52,10 @@ microphone = [
     "pyalsaaudio==0.11.0; sys_platform == 'linux'",
     "numpy",
 ]
+midi_keyboard = [
+    "mido>=1.3.0",
+    "python-rtmidi>=1.5.0",
+]
 web_ui = [
     "fastapi",
     "fastapi_socketio",
@@ -83,6 +87,7 @@ all = [
     "arduino_app_bricks[folderwatcher]",
     "arduino_app_bricks[usb_camera]",
     "arduino_app_bricks[microphone]",
+    "arduino_app_bricks[midi_keyboard]",
     "arduino_app_bricks[web_ui]",
     "arduino_app_bricks[streamlit_ui]",
     "arduino_app_bricks[mood_detector]",
