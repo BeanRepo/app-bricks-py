@@ -53,8 +53,8 @@ microphone = [
     "numpy",
 ]
 midi_keyboard = [
-    "mido>=1.3.0",
-    "python-rtmidi>=1.5.0",
+    "pyalsaaudio==0.11.0; sys_platform == 'linux'",
+    "numpy",
 ]
 web_ui = [
     "fastapi",

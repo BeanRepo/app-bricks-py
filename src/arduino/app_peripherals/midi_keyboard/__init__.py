@@ -2,13 +2,26 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-import mido
+import logging
 import threading
 import time
 from typing import Callable, Optional, Dict
 from arduino.app_utils import Logger
 
-logger = Logger("MIDIKeyboard")
+logger = Logger("MIDIKeyboard", logging.DEBUG)
+
+
+class MidiMessage:
+    """Minimal MIDI message container (compatible with mido.Message interface)."""
+
+    def __init__(self, msg_type: str, **kwargs):
+        self.type = msg_type
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def __repr__(self):
+        attrs = ", ".join(f"{k}={v}" for k, v in self.__dict__.items() if k != "type")
+        return f"<MidiMessage {self.type} {attrs}>"
 
 
 class MIDIKeyboardException(Exception):
@@ -18,11 +31,14 @@ class MIDIKeyboardException(Exception):
 
 
 class MIDIKeyboard:
-    """MIDI keyboard/controller input peripheral using mido.
+    """MIDI keyboard/controller input peripheral for Linux/ALSA.
 
     Handles MIDI input from USB MIDI devices including keyboards, drum pads,
     and control surfaces. Provides callbacks for note events, control changes,
     and pitch bend.
+
+    Uses direct ALSA device access (/dev/snd/midiC*D*) without external dependencies.
+    Designed for Arduino UNO Q and other Linux boards with ALSA support.
     """
 
     USB_MIDI_1 = "USB_MIDI_1"
@@ -80,12 +96,108 @@ class MIDIKeyboard:
         self._profile = None
         if profile:
             from .profiles import load_profile
+
             self._profile = load_profile(profile)
             logger.info(f"Loaded profile: {self._profile.name}")
 
         # Resolve device
         self.device_name = self._resolve_device(device)
         logger.info(f"Using MIDI device: {self.device_name}")
+
+    def _open_alsa_seq(self, device_name: str):
+        """Open ALSA sequencer port directly when mido backends are unavailable.
+
+        Args:
+            device_name: Device name in hw:X,Y format
+
+        Returns:
+            AlsaSeqPort object with receive() method compatible with mido
+
+        Raises:
+            Exception: If ALSA device cannot be opened
+        """
+        import select
+
+        class AlsaSeqPort:
+            """Minimal ALSA sequencer port wrapper compatible with mido interface."""
+
+            def __init__(self, device_name):
+                # Convert hw:X,Y to /dev/snd/midiCXDY
+                if device_name.startswith("hw:"):
+                    parts = device_name[3:].split(",")
+                    card = int(parts[0])
+                    dev = int(parts[1]) if len(parts) > 1 else 0
+                    self.device_path = f"/dev/snd/midiC{card}D{dev}"
+                else:
+                    self.device_path = device_name
+
+                self.fd = open(self.device_path, "rb", buffering=0)
+                logger.info(f"Opened raw ALSA device: {self.device_path}")
+
+            def receive(self, block=True):
+                """Read MIDI message from device (compatible with mido interface)."""
+                if not block:
+                    # Non-blocking: check if data is available
+                    rlist, _, _ = select.select([self.fd], [], [], 0)
+                    if not rlist:
+                        return None
+
+                # Read MIDI message (variable length)
+                try:
+                    status_byte = self.fd.read(1)
+                    if not status_byte:
+                        return None
+
+                    status = status_byte[0]
+
+                    # Parse message based on status byte
+                    if (status & 0xF0) == 0x90:  # Note On
+                        data = self.fd.read(2)
+                        note, velocity = data[0], data[1]
+                        return MidiMessage("note_on", note=note, velocity=velocity, channel=status & 0x0F)
+
+                    elif (status & 0xF0) == 0x80:  # Note Off
+                        data = self.fd.read(2)
+                        note, velocity = data[0], data[1]
+                        return MidiMessage("note_off", note=note, velocity=velocity, channel=status & 0x0F)
+
+                    elif (status & 0xF0) == 0xB0:  # Control Change
+                        data = self.fd.read(2)
+                        control, value = data[0], data[1]
+                        return MidiMessage("control_change", control=control, value=value, channel=status & 0x0F)
+
+                    elif (status & 0xF0) == 0xE0:  # Pitch Bend
+                        data = self.fd.read(2)
+                        lsb, msb = data[0], data[1]
+                        pitch = ((msb << 7) | lsb) - 8192
+                        return MidiMessage("pitchwheel", pitch=pitch, channel=status & 0x0F)
+
+                    elif (status & 0xF0) == 0xD0:  # Channel Pressure (Aftertouch)
+                        data = self.fd.read(1)
+                        value = data[0]
+                        return MidiMessage("aftertouch", value=value, channel=status & 0x0F)
+
+                    elif (status & 0xF0) == 0xA0:  # Polyphonic Aftertouch
+                        data = self.fd.read(2)
+                        note, value = data[0], data[1]
+                        return MidiMessage("polytouch", note=note, value=value, channel=status & 0x0F)
+
+                    else:
+                        # Unknown or system message, skip
+                        logger.debug(f"Skipping MIDI status byte: 0x{status:02x}")
+                        return None
+
+                except Exception as e:
+                    logger.error(f"Error parsing ALSA MIDI message: {e}")
+                    return None
+
+            def close(self):
+                """Close the ALSA device."""
+                if self.fd:
+                    self.fd.close()
+                    self.fd = None
+
+        return AlsaSeqPort(device_name)
 
     def _resolve_device(self, device: Optional[str]) -> str:
         """Resolve MIDI device name, handling USB_MIDI_1/2 macros.
@@ -109,9 +221,7 @@ class MIDIKeyboard:
 
         if device == self.USB_MIDI_2:
             if len(available) < 2:
-                raise MIDIKeyboardException(
-                    f"USB_MIDI_2 requested but only {len(available)} device(s) found."
-                )
+                raise MIDIKeyboardException(f"USB_MIDI_2 requested but only {len(available)} device(s) found.")
             return available[1]
 
         # Check if device exists in available list
@@ -124,23 +234,37 @@ class MIDIKeyboard:
                 logger.info(f"Matched device '{device}' to '{dev}'")
                 return dev
 
-        raise MIDIKeyboardException(
-            f"MIDI device '{device}' not found. Available: {available}"
-        )
+        raise MIDIKeyboardException(f"MIDI device '{device}' not found. Available: {available}")
 
     @staticmethod
     def list_usb_devices() -> list:
-        """List available MIDI input devices.
+        """List available MIDI input devices (ALSA raw MIDI).
 
         Returns:
-            List of MIDI input device names
+            List of MIDI input device names in hw:X,Y format
         """
-        try:
-            devices = mido.get_input_names()
-            logger.info(f"Available MIDI inputs: {devices}")
+        import glob
+        import re
+
+        # Scan /dev/snd for ALSA raw MIDI devices
+        devices = []
+        midi_devices = glob.glob("/dev/snd/midiC*D*")
+
+        if midi_devices:
+            # Found raw MIDI devices, convert to hw:X,Y format
+            for dev in sorted(midi_devices):
+                # Extract card and device numbers
+                # Format: /dev/snd/midiC0D0 -> hw:0,0
+                match = re.search(r"midiC(\d+)D(\d+)", dev)
+                if match:
+                    card, device = match.groups()
+                    hw_name = f"hw:{card},{device}"
+                    devices.append(hw_name)
+
+            logger.info(f"Available MIDI inputs (ALSA): {devices}")
             return devices
-        except Exception as e:
-            logger.error(f"Error listing MIDI devices: {e}")
+        else:
+            logger.warning("No MIDI devices found in /dev/snd")
             return []
 
     def start(self):
@@ -149,16 +273,15 @@ class MIDIKeyboard:
             logger.warning("MIDIKeyboard is already running")
             return
 
+        # Open ALSA sequencer directly (no external dependencies)
         try:
-            self._port = mido.open_input(self.device_name)
-            logger.info(f"Opened MIDI port: {self.device_name}")
+            self._port = self._open_alsa_seq(self.device_name)
+            logger.info(f"Opened ALSA sequencer port: {self.device_name}")
         except Exception as e:
             raise MIDIKeyboardException(f"Failed to open MIDI device: {e}")
 
         self._is_running.set()
-        self._listener_thread = threading.Thread(
-            target=self._listen_loop, daemon=True, name="MIDIKeyboard-Listener"
-        )
+        self._listener_thread = threading.Thread(target=self._listen_loop, daemon=True, name="MIDIKeyboard-Listener")
         self._listener_thread.start()
         logger.info("MIDIKeyboard started")
 
@@ -201,7 +324,7 @@ class MIDIKeyboard:
                     continue
 
                 # Filter by channel if specified
-                if self.channel is not None and hasattr(msg, 'channel'):
+                if self.channel is not None and hasattr(msg, "channel"):
                     if msg.channel + 1 != self.channel:  # mido uses 0-based channels
                         continue
 
@@ -217,10 +340,10 @@ class MIDIKeyboard:
         """Process incoming MIDI message and trigger callbacks.
 
         Args:
-            msg: mido.Message object
+            msg: MidiMessage or mido.Message object
         """
         try:
-            if msg.type == 'note_on':
+            if msg.type == "note_on":
                 note = msg.note
                 velocity = msg.velocity
 
@@ -230,19 +353,19 @@ class MIDIKeyboard:
                 else:
                     self._handle_note_on(note, velocity)
 
-            elif msg.type == 'note_off':
+            elif msg.type == "note_off":
                 self._handle_note_off(msg.note, msg.velocity)
 
-            elif msg.type == 'control_change':
+            elif msg.type == "control_change":
                 self._handle_cc(msg.control, msg.value)
 
-            elif msg.type == 'pitchwheel':
+            elif msg.type == "pitchwheel":
                 self._handle_pitchbend(msg.pitch)
 
-            elif msg.type == 'aftertouch':
+            elif msg.type == "aftertouch":
                 self._handle_aftertouch(msg.value)
 
-            elif msg.type == 'polytouch':
+            elif msg.type == "polytouch":
                 # Polyphonic aftertouch (per-note pressure)
                 logger.debug(f"Poly aftertouch: note={msg.note}, value={msg.value}")
 
@@ -427,9 +550,7 @@ class MIDIKeyboard:
             midi.on_pad("pad_1", lambda vel: print(f"Pad 1: {vel}"))
         """
         if not self._profile:
-            raise MIDIKeyboardException(
-                "on_pad() requires a profile. Initialize with profile parameter."
-            )
+            raise MIDIKeyboardException("on_pad() requires a profile. Initialize with profile parameter.")
         self._semantic_pad_callbacks[pad_name] = callback
 
     def on_knob(self, knob_name: str, callback: Callable):
@@ -447,9 +568,7 @@ class MIDIKeyboard:
             midi.on_knob("knob_1", lambda val: print(f"Knob 1: {val}"))
         """
         if not self._profile:
-            raise MIDIKeyboardException(
-                "on_knob() requires a profile. Initialize with profile parameter."
-            )
+            raise MIDIKeyboardException("on_knob() requires a profile. Initialize with profile parameter.")
         self._semantic_knob_callbacks[knob_name] = callback
 
     @staticmethod
@@ -478,6 +597,7 @@ class MIDIKeyboard:
             MIDI note number (0-127)
         """
         import math
+
         return int(round(69 + 12 * math.log2(frequency / 440.0)))
 
     def get_profile_info(self) -> Optional[dict]:
@@ -505,6 +625,7 @@ class MIDIKeyboard:
             List of profile names
         """
         from .profiles import list_available_profiles
+
         return list_available_profiles()
 
     def __enter__(self):
