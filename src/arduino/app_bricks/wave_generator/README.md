@@ -81,12 +81,18 @@ from arduino.app_bricks.wave_generator import WaveGenerator
 from arduino.app_peripherals.speaker import Speaker
 from arduino.app_utils import App
 
+# Create Speaker with optimal real-time configuration
 speaker = Speaker(
     device=Speaker.USB_SPEAKER_2,
     sample_rate=16000,
     channels=1,
-    format="S16_LE"
+    format="FLOAT_LE",
+    periodsize=480,  # 16000 Hz × 0.03s = 480 frames (eliminates buffer mismatch)
+    queue_maxsize=10  # Low latency configuration
 )
+
+# Start external Speaker manually (WaveGenerator won't manage its lifecycle)
+speaker.start()
 
 wave_gen = WaveGenerator(sample_rate=16000, speaker=speaker)
 
@@ -95,7 +101,12 @@ wave_gen.set_frequency(440.0)
 wave_gen.set_amplitude(0.7)
 
 App.run()
+
+# Stop external Speaker manually
+speaker.stop()
 ```
+
+**Note:** When providing an external Speaker, you manage its lifecycle (start/stop). WaveGenerator only validates configuration and uses it for playback.
 
 ## Understanding Wave Generation
 
