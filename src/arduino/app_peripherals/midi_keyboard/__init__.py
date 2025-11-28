@@ -72,6 +72,7 @@ class MIDIKeyboard:
 
         self.channel = channel
         self.profile_name = profile
+        self.friendly_name = None  # Descriptive device name
         self._port = None
         self._is_running = threading.Event()
         self._listener_thread = None
@@ -169,7 +170,8 @@ class MIDIKeyboard:
                     elif (status & 0xF0) == 0xE0:  # Pitch Bend
                         data = self.fd.read(2)
                         lsb, msb = data[0], data[1]
-                        pitch = ((msb << 7) | lsb) - 8192
+                        # Raw value 0-16383 (center = 8192)
+                        pitch = (msb << 7) | lsb
                         return MidiMessage("pitchwheel", pitch=pitch, channel=status & 0x0F)
 
                     elif (status & 0xF0) == 0xD0:  # Channel Pressure (Aftertouch)
@@ -187,6 +189,10 @@ class MIDIKeyboard:
                         logger.debug(f"Skipping MIDI status byte: 0x{status:02x}")
                         return None
 
+                except (OSError, IOError) as e:
+                    # Device disconnected - re-raise to be caught by listener loop
+                    logger.debug(f"ALSA device read error: {e}")
+                    raise
                 except Exception as e:
                     logger.error(f"Error parsing ALSA MIDI message: {e}")
                     return None
@@ -206,7 +212,7 @@ class MIDIKeyboard:
             device: Device name or USB_MIDI_1/2 macro
 
         Returns:
-            Resolved MIDI device name
+            Resolved MIDI device hw:X,Y name (also sets self.friendly_name)
 
         Raises:
             MIDIKeyboardException: If no MIDI device is found
@@ -217,31 +223,97 @@ class MIDIKeyboard:
             raise MIDIKeyboardException("No MIDI input devices found.")
 
         if device is None or device == self.USB_MIDI_1:
-            return available[0]
+            self.friendly_name = available[0]["friendly_name"]
+            return available[0]["hw_name"]
 
         if device == self.USB_MIDI_2:
             if len(available) < 2:
                 raise MIDIKeyboardException(f"USB_MIDI_2 requested but only {len(available)} device(s) found.")
-            return available[1]
+            self.friendly_name = available[1]["friendly_name"]
+            return available[1]["hw_name"]
 
-        # Check if device exists in available list
-        if device in available:
-            return device
-
-        # Try partial match
+        # Check if device exists in available list (exact hw_name match)
         for dev in available:
-            if device.lower() in dev.lower():
-                logger.info(f"Matched device '{device}' to '{dev}'")
-                return dev
+            if device == dev["hw_name"]:
+                self.friendly_name = dev["friendly_name"]
+                return dev["hw_name"]
 
-        raise MIDIKeyboardException(f"MIDI device '{device}' not found. Available: {available}")
+        # Try partial match on hw_name or friendly_name
+        for dev in available:
+            hw_match = device.lower() in dev["hw_name"].lower()
+            friendly_match = dev["friendly_name"] and device.lower() in dev["friendly_name"].lower()
+            if hw_match or friendly_match:
+                logger.info(f"Matched device '{device}' to '{dev['friendly_name']}' ({dev['hw_name']})")
+                self.friendly_name = dev["friendly_name"]
+                return dev["hw_name"]
+
+        available_names = [f"{d['friendly_name']} ({d['hw_name']})" for d in available]
+        raise MIDIKeyboardException(f"MIDI device '{device}' not found. Available: {available_names}")
+
+    @staticmethod
+    def _get_alsa_card_name(card_num: int) -> str:
+        """Get friendly name for ALSA card from sysfs.
+
+        Args:
+            card_num: ALSA card number
+
+        Returns:
+            Friendly card name or generic fallback
+        """
+        import os
+        import subprocess
+
+        try:
+            # Try to read card ID from sysfs first (works in containers)
+            card_id_path = f"/sys/class/sound/card{card_num}/id"
+            if os.path.exists(card_id_path):
+                with open(card_id_path, "r") as f:
+                    card_id = f.read().strip()
+                    logger.debug(f"Found card ID for card{card_num}: {card_id}")
+
+                    # Try to get full USB product name via symlink resolution
+                    try:
+                        cmd = f"readlink /sys/class/sound/card{card_num} | xargs -I{{}} cat /sys/class/sound/{{}}/device/../product 2>/dev/null"
+                        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=2)
+                        if result.returncode == 0 and result.stdout.strip():
+                            product_name = result.stdout.strip()
+                            logger.debug(f"Found USB product name for card{card_num}: {product_name}")
+                            return product_name
+                    except Exception as e:
+                        logger.debug(f"Could not read USB product name: {e}")
+
+                    # Fallback to card ID if product name not available
+                    return card_id
+
+            # Fallback: try /proc/asound/cards (may not be available in containers)
+            cards_path = "/proc/asound/cards"
+            if os.path.exists(cards_path) and os.access(cards_path, os.R_OK):
+                with open(cards_path, "r") as f:
+                    for line in f:
+                        # Format: " 2 [MPKmini3       ]: USB-Audio - Akai MPK mini 3"
+                        stripped = line.lstrip()
+                        if stripped.startswith(f"{card_num} "):
+                            logger.debug(f"Found card{card_num} in {cards_path}")
+                            # Extract the friendly name after the dash
+                            if " - " in line:
+                                return line.split(" - ", 1)[1].strip()
+                            # If no dash, try to extract from brackets
+                            elif "[" in line and "]" in line:
+                                return line.split("[")[1].split("]")[0].strip()
+
+            logger.debug(f"Could not find friendly name for card{card_num}, using fallback")
+            return f"ALSA Card {card_num}"
+
+        except Exception as e:
+            logger.debug(f"Error reading ALSA card name for card {card_num}: {e}")
+            return f"ALSA Card {card_num}"
 
     @staticmethod
     def list_usb_devices() -> list:
         """List available MIDI input devices (ALSA raw MIDI).
 
         Returns:
-            List of MIDI input device names in hw:X,Y format
+            List of dicts with 'hw_name' (hw:X,Y) and 'friendly_name' (descriptive name)
         """
         import glob
         import re
@@ -251,7 +323,7 @@ class MIDIKeyboard:
         midi_devices = glob.glob("/dev/snd/midiC*D*")
 
         if midi_devices:
-            # Found raw MIDI devices, convert to hw:X,Y format
+            # Found raw MIDI devices, convert to hw:X,Y format with friendly names
             for dev in sorted(midi_devices):
                 # Extract card and device numbers
                 # Format: /dev/snd/midiC0D0 -> hw:0,0
@@ -259,9 +331,10 @@ class MIDIKeyboard:
                 if match:
                     card, device = match.groups()
                     hw_name = f"hw:{card},{device}"
-                    devices.append(hw_name)
+                    friendly_name = MIDIKeyboard._get_alsa_card_name(int(card))
+                    devices.append({"hw_name": hw_name, "friendly_name": friendly_name})
 
-            logger.info(f"Available MIDI inputs (ALSA): {devices}")
+            logger.info(f"Available MIDI inputs (ALSA): {[d['friendly_name'] for d in devices]}")
             return devices
         else:
             logger.warning("No MIDI devices found in /dev/snd")
