@@ -39,7 +39,7 @@ class WaveGenerator:
         self,
         sample_rate: int = 16000,
         wave_type: WaveType = "sine",
-        block_duration: float = 0.03,
+        block_duration: float = 0.01,
         attack: float = 0.01,
         release: float = 0.03,
         glide: float = 0.02,
@@ -50,14 +50,14 @@ class WaveGenerator:
         Args:
             sample_rate (int): Audio sample rate in Hz (default: 16000).
             wave_type (WaveType): Initial waveform type (default: "sine").
-            block_duration (float): Duration of each audio block in seconds (default: 0.03).
+            block_duration (float): Duration of each audio block in seconds (default: 0.01).
             attack (float): Attack time for amplitude envelope in seconds (default: 0.01).
             release (float): Release time for amplitude envelope in seconds (default: 0.03).
             glide (float): Frequency glide time (portamento) in seconds (default: 0.02).
             speaker (Speaker, optional): Pre-configured Speaker instance. If None, WaveGenerator
                 will create an internal Speaker optimized for real-time synthesis with:
                 - periodsize aligned to block_duration (eliminates buffer mismatch)
-                - queue_maxsize=10 (low latency: ~300ms max buffer)
+                - queue_maxsize=8 (low latency: ~80ms max buffer)
                 - format=FLOAT_LE, channels=1
 
                 If providing an external Speaker, ensure:
@@ -70,8 +70,8 @@ class WaveGenerator:
                         device="plughw:CARD=UH34",
                         sample_rate=16000,
                         format="FLOAT_LE",
-                        periodsize=480,  # 16000 × 0.03 = 480 frames
-                        queue_maxsize=10
+                        periodsize=160,  # 16000 × 0.01 = 160 frames
+                        queue_maxsize=8
                     )
 
         Raises:
@@ -144,7 +144,7 @@ class WaveGenerator:
                 channels=1,
                 format="FLOAT_LE",
                 periodsize=block_size_frames,  # Align with generation block
-                queue_maxsize=10,  # Low latency: 10 blocks = 300ms max buffer
+                queue_maxsize=8,  # Extreme low latency: 8 blocks = 80ms @ 10ms/block
             )
             self._owns_speaker = True
             logger.info(
@@ -325,11 +325,13 @@ class WaveGenerator:
         """Main producer loop running in background thread.
 
         Continuously generates audio blocks at a steady cadence and streams
-        them to the speaker device.
+        them to the speaker device. Uses adaptive generation: when queue is low,
+        generates extra blocks to prevent underruns and glitches.
         """
         logger.debug("Producer loop started")
         next_time = time.perf_counter()
         block_count = 0
+        emergency_refill_threshold = 2  # Generate extra blocks if queue below this (~20ms @ 10ms/block)
 
         while self._running.is_set():
             next_time += self.block_duration
@@ -345,10 +347,20 @@ class WaveGenerator:
             if block_count % 100 == 0 or (block_count < 5):
                 logger.debug(f"Producer: block={block_count}, freq={target_freq:.1f}Hz, amp={target_amp:.3f}")
 
-            # Generate audio block
+            # Check queue depth and generate extra blocks if needed
+            queue_depth = self._speaker._playing_queue.qsize()
+            blocks_to_generate = 1
+            if queue_depth < emergency_refill_threshold:
+                # Emergency: generate 2-3 blocks at once to quickly refill
+                blocks_to_generate = min(3, emergency_refill_threshold - queue_depth)
+                if blocks_to_generate > 1:
+                    logger.debug(f"Emergency refill: queue={queue_depth}, generating {blocks_to_generate} blocks")
+
+            # Generate audio block(s)
             try:
-                audio_block = self._generate_block(target_freq, target_amp, wave_type)
-                self._speaker.play(audio_block, block_on_queue=False)
+                for _ in range(blocks_to_generate):
+                    audio_block = self._generate_block(target_freq, target_amp, wave_type)
+                    self._speaker.play(audio_block, block_on_queue=False)
             except Exception as e:
                 logger.error(f"Error generating audio block: {e}")
 
