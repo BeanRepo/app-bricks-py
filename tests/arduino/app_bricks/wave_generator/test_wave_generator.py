@@ -29,6 +29,8 @@ def mock_speaker(monkeypatch):
         USB_SPEAKER_2 = "USB_SPEAKER_2"
 
         def __init__(self, device=None, sample_rate=16000, channels=1, format="FLOAT_LE", periodsize=None, queue_maxsize=100):
+            import queue
+
             self.device = device or "fake_device"
             self.sample_rate = sample_rate
             self.channels = channels
@@ -38,6 +40,7 @@ def mock_speaker(monkeypatch):
             self._is_reproducing = threading.Event()  # Support lifecycle checks
             self._played_data = []
             self._mixer = FakeMixer()
+            self._playing_queue = queue.Queue(maxsize=queue_maxsize)  # Support adaptive generation
 
         def start(self):
             self._is_started = True
@@ -50,6 +53,11 @@ def mock_speaker(monkeypatch):
         def play(self, data, block_on_queue=False):
             if self._is_started:
                 self._played_data.append(data)
+                # Simulate queue behavior for adaptive generation
+                try:
+                    self._playing_queue.put_nowait(data)
+                except:
+                    pass  # Queue full, ignore
 
         def set_volume(self, volume: int):
             self._mixer.setvolume(volume)
@@ -85,7 +93,7 @@ def test_wave_generator_initialization_default(mock_speaker):
 
     assert wave_gen.sample_rate == 16000
     assert wave_gen.wave_type == "sine"
-    assert wave_gen.block_duration == 0.03
+    assert wave_gen.block_duration == 0.01  # Updated: new optimized default
     assert wave_gen.attack == 0.01
     assert wave_gen.release == 0.03
     assert wave_gen.glide == 0.02
@@ -272,7 +280,7 @@ def test_generate_block_sine(mock_speaker):
     # Check block properties
     assert isinstance(block, np.ndarray)
     assert block.dtype == np.float32
-    expected_samples = int(16000 * 0.03)  # block_duration = 0.03
+    expected_samples = int(16000 * wave_gen.block_duration)  # Use actual block_duration
     assert len(block) == expected_samples
     # Check amplitude is within range
     assert np.max(np.abs(block)) <= 0.5
