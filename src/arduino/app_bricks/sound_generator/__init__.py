@@ -15,6 +15,7 @@ from collections import OrderedDict
 from .generator import WaveSamplesBuilder
 from .effects import *
 from .loaders import ABCNotationLoader
+from .composition import MusicComposition as MusicComposition
 
 logger = Logger("SoundGenerator", logging.DEBUG)
 
@@ -590,6 +591,39 @@ class SoundGenerator(SoundGeneratorStreamer):
         self._output_device.play(blk, block_on_queue=False)
         if block and duration > 0.0:
             time.sleep(duration)
+
+    def play_composition(self, composition: "MusicComposition", block: bool = False):
+        """
+        Play a MusicComposition object.
+
+        This method configures the SoundGenerator with the composition's settings
+        and plays the polyphonic sequence.
+
+        Args:
+            composition (MusicComposition): The composition to play.
+            block (bool): If True, block until the entire composition has been played.
+
+        Example:
+            ```python
+            from arduino.app_bricks.sound_generator import MusicComposition, SoundGenerator, SoundEffect
+
+            comp = MusicComposition(
+                composition=[[("C4", 0.25), ("E4", 0.25)], [("G4", 0.5)]], bpm=120, waveform="square", volume=0.8, effects=[SoundEffect.adsr()]
+            )
+
+            gen = SoundGenerator()
+            gen.start()
+            gen.play_composition(comp, block=True)
+            ```
+        """
+        # Configure the generator with composition settings
+        self.set_bpm(composition.bpm)
+        self.set_wave_form(composition.waveform)
+        self.set_master_volume(composition.volume)
+        self.set_effects(composition.effects)
+
+        # Play the composition
+        self.play_polyphonic(composition.composition, volume=composition.volume, block=block)
 
     def play_chord(self, notes: list[str], note_duration: float | str = 1 / 4, volume: float = None, block: bool = False):
         """
