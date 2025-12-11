@@ -146,6 +146,16 @@ class SoundGeneratorStreamer:
         """
         self._master_volume = max(0.0, min(1.0, volume))
 
+    def set_bpm(self, bpm: int):
+        """
+        Set the tempo in beats per minute.
+        Args:
+            bpm (int): Tempo in beats per minute.
+        """
+        with self._cfg_lock:
+            self._bpm = bpm
+        logger.debug(f"BPM updated to {bpm}")
+
     def set_effects(self, effects: list):
         """
         Set the list of sound effects to apply to the audio signal.
@@ -750,7 +760,7 @@ class SoundGenerator(SoundGeneratorStreamer):
                 self._sequence_stop_event.set()
                 # Clear reference immediately - thread will clean itself up
                 self._sequence_thread = None
-                self._output_device.drop_playback()
+                self._output_device.clear()
             else:
                 logger.warning("stop_sequence called but no active sequence thread")
 
@@ -782,7 +792,6 @@ class SoundGenerator(SoundGeneratorStreamer):
         queuing each step, ensuring perfect sync with audio playback.
         """
         from itertools import cycle
-        import numpy as np
 
         try:
             duration = self._note_duration(note_duration)

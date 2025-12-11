@@ -7,10 +7,9 @@ import numpy as np
 import threading
 import queue
 import re
-import logging
 from arduino.app_utils import Logger
 
-logger = Logger("Speaker", logging.DEBUG)
+logger = Logger("Speaker")
 
 
 class SpeakerException(Exception):
@@ -527,8 +526,8 @@ class Speaker:
         """Clear the playback queue."""
         self._clear_queue()
 
-    def drop_playback(self):
-        """Drop all pending audio data immediately (both queue and hardware buffer).
+    def clear(self):
+        """Clear all pending audio data immediately (both queue and hardware buffer).
 
         This method clears both the software queue and the ALSA hardware buffer,
         stopping audio playback immediately. Use this for responsive stop operations.
@@ -539,14 +538,14 @@ class Speaker:
         # Clear software queue first
         self._clear_queue()
 
-        # Then drop ALSA hardware buffer
+        # Then clear ALSA hardware buffer
         with self._pcm_lock:
             if self._pcm is not None:
                 try:
                     self._pcm.drop()  # Immediately stop PCM, drop pending frames
-                    logger.debug("ALSA PCM buffer dropped")
+                    logger.debug("ALSA PCM buffer cleared")
                 except Exception as e:
-                    logger.warning(f"Failed to drop PCM buffer: {e}")
+                    logger.warning(f"Failed to clear PCM buffer: {e}")
 
         # Allow playback to resume
         self._is_dropping.clear()
